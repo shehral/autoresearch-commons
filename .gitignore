@@ -18,3 +18,11 @@ AGENTS.md
 
 # Experimental code/artifacts
 dev/
+
+# Training artifacts
+run.log
+*.pt
+
+# Track knowledge base (override any broader ignores)
+!knowledge/
+!knowledge/**
