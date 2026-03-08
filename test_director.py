@@ -264,3 +264,44 @@ class TestFileLocking:
         for exp in queue["experiments"]:
             assert "id" in exp
             assert "status" in exp
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis deduplication
+# ---------------------------------------------------------------------------
+
+
+class TestHypothesisDedup:
+    def test_no_duplicate_category_priority_pairs(self, knowledge_dir: Path):
+        """plan_experiments should not produce two ideas with the same (category, priority)."""
+        from commons import create_card
+        create_card(
+            knowledge_dir, commit_id="c1",
+            hypothesis="Test", config_diff={},
+            results={"val_bpb": 0.99, "delta": -0.01},
+            status="keep", lesson="test", tags=["opt"],
+        )
+        ideas = plan_experiments(knowledge_dir)
+        seen = set()
+        for idea in ideas:
+            key = (idea["category"], idea["priority"])
+            assert key not in seen, f"Duplicate idea: {key}"
+            seen.add(key)
+
+    def test_saturated_tag_not_under_explored(self, knowledge_dir: Path):
+        """A tag with 5+ experiments should NOT get priority 1 (under-explored)."""
+        from commons import create_card
+        for i in range(5):
+            create_card(
+                knowledge_dir, commit_id=f"c{i}",
+                hypothesis=f"LR experiment {i}", config_diff={},
+                results={"val_bpb": 0.99, "delta": -0.01},
+                status="keep", lesson="test", tags=["lr"],
+            )
+        ideas = plan_experiments(knowledge_dir)
+        lr_p1 = [i for i in ideas if i["category"] == "lr" and i["priority"] == 1]
+        assert len(lr_p1) == 0
+
+    def test_empty_knowledge_returns_empty(self, knowledge_dir: Path):
+        ideas = plan_experiments(knowledge_dir)
+        assert ideas == []

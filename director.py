@@ -254,6 +254,16 @@ def plan_experiments(knowledge_dir: Path | str) -> list[dict]:
             "priority": 3,
         })
 
+    # Deduplicate: no two ideas with same (category, priority)
+    seen = set()
+    deduped = []
+    for idea in ideas:
+        key = (idea["category"], idea["priority"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(idea)
+    ideas = deduped
+
     # Sort by priority
     ideas.sort(key=lambda i: i["priority"])
     return ideas
