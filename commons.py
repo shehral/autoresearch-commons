@@ -671,6 +671,61 @@ def update_meta_synthesis(knowledge_dir: Path | str) -> str:
     return str(out_path)
 
 
+def generate_progress_plot(knowledge_dir: Path | str) -> str:
+    """Generate a val_bpb progress chart and save as PNG.
+
+    Returns the path to the saved PNG file.
+    """
+    import matplotlib
+    matplotlib.use("Agg")  # Non-interactive backend
+    import matplotlib.pyplot as plt
+
+    knowledge_dir = Path(knowledge_dir)
+    cards = load_cards(knowledge_dir)
+
+    # Sort by timestamp (oldest first for plotting)
+    cards_chronological = sorted(cards, key=lambda c: c.get("timestamp", ""))
+
+    bpbs = []
+    colors = []
+    status_color = {
+        "keep": "green", "revert": "red", "crash": "orange",
+        "inconclusive": "gray", "retracted": "lightgray",
+    }
+
+    for card in cards_chronological:
+        bpb = card.get("results", {}).get("val_bpb")
+        if bpb is not None and card.get("status") != "retracted":
+            bpbs.append(bpb)
+            colors.append(status_color.get(card.get("status", ""), "blue"))
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    if bpbs:
+        ax.scatter(range(len(bpbs)), bpbs, c=colors, s=60, zorder=3)
+        ax.plot(range(len(bpbs)), bpbs, color="lightblue", linewidth=1, zorder=2)
+
+        # Running best line
+        running_best = []
+        best_so_far = float("inf")
+        for b in bpbs:
+            best_so_far = min(best_so_far, b)
+            running_best.append(best_so_far)
+        ax.plot(range(len(bpbs)), running_best, color="darkblue",
+                linewidth=2, linestyle="--", label="Best so far")
+        ax.legend()
+
+    ax.set_xlabel("Experiment #")
+    ax.set_ylabel("val_bpb (lower is better)")
+    ax.set_title("Experiment Progress")
+    ax.grid(True, alpha=0.3)
+
+    out_path = knowledge_dir / "progress.png"
+    fig.savefig(str(out_path), dpi=100, bbox_inches="tight")
+    plt.close(fig)
+
+    return str(out_path)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -722,6 +777,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # update-meta
     subparsers.add_parser("update-meta", help="Regenerate meta-synthesis.md")
+
+    # plot
+    subparsers.add_parser("plot", help="Generate progress chart (val_bpb over time)")
 
     return parser
 
@@ -807,6 +865,10 @@ def main() -> None:
     elif args.command == "update-meta":
         out_path = update_meta_synthesis(knowledge_dir)
         print(f"Meta-synthesis written to: {out_path}")
+
+    elif args.command == "plot":
+        out_path = generate_progress_plot(knowledge_dir)
+        print(f"Plot saved to: {out_path}")
 
     else:
         parser.print_help()
