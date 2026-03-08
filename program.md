@@ -115,7 +115,9 @@ LOOP FOREVER:
      --status <keep|discard|crash> \
      --lesson "<what you learned from this experiment>" \
      --tags "<comma,separated,category,tags>"
+     --prior-cards "<comma,separated,card,ids that informed this experiment>"
    ```
+   List the card IDs from `read-brief` that informed your experiment choice. This builds experiment lineage — future agents can trace which findings led to which experiments.
    Use descriptive tags like: `batch_size`, `architecture`, `optimizer`, `learning_rate`, `regularization`, `depth`, `activation`, `window_pattern`, `init_scale`, etc.
 9. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
 10. If val_bpb is equal or worse, you git reset back to where you started

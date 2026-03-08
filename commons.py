@@ -377,9 +377,11 @@ def read_brief(knowledge_dir: Path | str) -> str:
             results = card.get("results", {})
             bpb = results.get("val_bpb", "n/a")
             delta = results.get("delta", "n/a")
+            prior_count = len(card.get("prior_knowledge_used", []))
+            prior_str = f" prior={prior_count}" if prior_count > 0 else ""
             parts.append(
                 f"- [{card['id']}] {card['hypothesis'][:80]} "
-                f"| status={card['status']} bpb={bpb} delta={delta}"
+                f"| status={card['status']} bpb={bpb} delta={delta}{prior_str}"
             )
 
     # --- Open questions ---
@@ -679,6 +681,7 @@ def _build_parser() -> argparse.ArgumentParser:
     wc.add_argument("--lesson", required=True, help="Lesson learned")
     wc.add_argument("--tags", required=True, help="Comma-separated tags")
     wc.add_argument("--config-diff", default="{}", help="JSON string of config diff")
+    wc.add_argument("--prior-cards", default="", help="Comma-separated card IDs that informed this experiment")
 
     # retract
     rt = subparsers.add_parser("retract", help="Mark a card as retracted")
@@ -728,6 +731,8 @@ def main() -> None:
             "num_steps": args.num_steps,
         }
 
+        prior_cards = [c.strip() for c in args.prior_cards.split(",") if c.strip()] if args.prior_cards else []
+
         card = create_card(
             knowledge_dir=knowledge_dir,
             commit_id=args.commit,
@@ -737,6 +742,7 @@ def main() -> None:
             status=args.status,
             lesson=args.lesson,
             tags=[t.strip() for t in args.tags.split(",")],
+            prior_knowledge_used=prior_cards,
         )
         print(f"Card created: {card['id']}")
 

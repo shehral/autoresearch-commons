@@ -805,3 +805,44 @@ class TestRetractCard:
         retract_card(knowledge_dir, card["id"], reason="bad")
         brief = read_brief(knowledge_dir)
         assert "Retracted experiment" not in brief
+
+
+# ---------------------------------------------------------------------------
+# Experiment lineage
+# ---------------------------------------------------------------------------
+
+
+class TestExperimentLineage:
+    def test_write_card_cli_accepts_prior_cards(self, knowledge_dir: Path):
+        import subprocess
+
+        c1 = _make_card(knowledge_dir, commit_id="parent_1")
+        result = subprocess.run(
+            [
+                "python", "commons.py", "write-card",
+                "--commit", "child_1",
+                "--hypothesis", "Build on parent",
+                "--result", "0.95",
+                "--delta", "-0.05",
+                "--peak-memory", "1000",
+                "--training-seconds", "300",
+                "--num-steps", "100",
+                "--status", "keep",
+                "--lesson", "Improved on parent",
+                "--tags", "lr",
+                "--prior-cards", c1["id"],
+            ],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        cards = load_cards(knowledge_dir)
+        child = [c for c in cards if c["parent_commit"] == "child_1"][0]
+        assert c1["id"] in child["prior_knowledge_used"]
+
+    def test_brief_shows_lineage_count(self, knowledge_dir: Path):
+        c1 = _make_card(knowledge_dir, commit_id="p1")
+        _make_card(knowledge_dir, commit_id="c1", prior_knowledge_used=[c1["id"]])
+        brief = read_brief(knowledge_dir)
+        assert "prior=1" in brief
