@@ -18,3 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cuda = ["kernels>=0.11.7"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+pythonpath = ["."]

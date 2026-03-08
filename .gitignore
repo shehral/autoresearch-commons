@@ -23,6 +23,10 @@ dev/
 run.log
 *.pt
 
+# Upstream artifacts (not part of this fork)
+progress.png
+analysis.ipynb
+
 # Track knowledge base (override any broader ignores)
 !knowledge/
 !knowledge/**
