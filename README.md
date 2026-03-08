@@ -219,6 +219,7 @@ uv run pytest tests/test_platform.py -v
 - [Andrej Karpathy](https://github.com/karpathy) — autoresearch and nanochat
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) — MPS adaptation patterns
 - [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) — MLX reference
+- [Claude Code](https://claude.com/claude-code) — planning, development, and testing
 
 ## License
 
