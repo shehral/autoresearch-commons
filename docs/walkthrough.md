@@ -209,7 +209,7 @@ The agent will:
 1. Read `program.md` for its instructions
 2. Read `README.md`, `prepare.py`, `train.py`, and `commons.py` for context
 3. Propose a run tag (e.g., `mar8`)
-4. Create a branch: `git checkout -b autoresearch/mar8`
+4. Create a branch: `git checkout -b experiment/mar8`
 5. Check that training data exists
 6. Create `results.tsv` with the baseline
 7. Read the knowledge base: `uv run commons.py read-brief`
@@ -238,7 +238,7 @@ uv run commons.py coverage
 uv run commons.py plot
 
 # Look at the experiment branch
-git log --oneline autoresearch/mar8
+git log --oneline experiment/mar8
 ```
 
 ---
@@ -562,7 +562,7 @@ d4e5f6g   0.000000   0.0        crash    double model width (OOM)
 ### Reading the Git Log
 
 ```bash
-git log --oneline autoresearch/mar8
+git log --oneline experiment/mar8
 ```
 
 The branch only contains commits that improved val_bpb (discarded experiments are reverted). So the git history reads like a success story — each commit is a validated improvement.
