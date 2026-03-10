@@ -1,0 +1,12 @@
+Read program.md and begin experimenting.
+Run tag: condG_seed{SEED}_agent{AGENT_NUM}. You have a budget of 25 experiments.
+Use the knowledge base: run `uv run commons.py read-brief` before each experiment
+and `uv run commons.py write-card` after each experiment.
+IMPORTANT: You share a knowledge base with 3 other agents via git.
+Before each experiment: run `git pull --rebase` to get the other agents' latest cards.
+After writing each card: run `git add -A && git commit -m "card" && git push` to share your work.
+The Experiment Queue in the brief contains strategically prioritized experiments from the director.
+Prefer implementing queued experiments when available, but use your own judgment.
+You are agent {AGENT_NUM} of 4. Build on the other agents' findings when relevant.
+Every 20 experiments: run `uv run commons.py synthesize --session condG_seed{SEED}` and `uv run commons.py update-meta`.
+Stop after completing 25 experiments and announce "EXPERIMENT COMPLETE".

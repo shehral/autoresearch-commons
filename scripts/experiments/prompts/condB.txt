@@ -1,0 +1,5 @@
+Read program.md and begin experimenting.
+Run tag: condB_seed{SEED}. You have a budget of 100 experiments.
+Use the knowledge base: run `uv run commons.py read-brief` before each experiment
+and `uv run commons.py write-card` after each experiment.
+Stop after completing 100 experiments and announce "EXPERIMENT COMPLETE".

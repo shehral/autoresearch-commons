@@ -1,0 +1,9 @@
+Read program.md and begin experimenting.
+Run tag: condD_seed{SEED}_agent{AGENT_NUM}. You have a budget of 50 experiments.
+Use the knowledge base: run `uv run commons.py read-brief` before each experiment
+and `uv run commons.py write-card` after each experiment.
+IMPORTANT: You share a knowledge base with another agent via git.
+Before each experiment: run `git pull --rebase` to get the other agent's latest cards.
+After writing each card: run `git add -A && git commit -m "card" && git push` to share your work.
+You are agent {AGENT_NUM} of 2. Build on the other agent's findings when relevant.
+Stop after completing 50 experiments and announce "EXPERIMENT COMPLETE".

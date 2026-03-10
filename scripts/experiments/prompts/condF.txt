@@ -1,0 +1,6 @@
+Read program.md and begin experimenting.
+Run tag: condF_seed{SEED}_agent{AGENT_NUM}. You have a budget of 25 experiments.
+Use the knowledge base: run `uv run commons.py read-brief` before each experiment
+and `uv run commons.py write-card` after each experiment.
+You are agent {AGENT_NUM} of 4. Your knowledge base is private -- no other agents see your cards.
+Stop after completing 25 experiments and announce "EXPERIMENT COMPLETE".

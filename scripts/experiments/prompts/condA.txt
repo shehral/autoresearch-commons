@@ -1,0 +1,4 @@
+Read scripts/experiments/condA_program.md (NOT the regular program.md).
+This is the memoryless condition -- you do NOT use the knowledge base.
+Run tag: condA_seed{SEED}. You have a budget of 100 experiments.
+Stop after completing 100 experiments and announce "EXPERIMENT COMPLETE".
