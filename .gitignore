@@ -23,6 +23,9 @@ dev/
 run.log
 *.pt
 
+# Results file (untracked, per-agent)
+results.tsv
+
 # Upstream artifacts (not part of this fork)
 progress.png
 analysis.ipynb

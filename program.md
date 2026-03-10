@@ -6,17 +6,16 @@ This is an experiment to have the LLM do its own research — with a shared know
 
 To set up a new experiment, work with the user to:
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
+1. **Agree on a run tag**: propose a tag (e.g. `condB_seed0` or `mar5`). If a branch hasn't been created yet, create one: `git checkout -b experiment/<tag>` from current master.
+2. **Read the in-scope files**: The repo is small. Read these files for full context:
    - `README.md` — repository context.
    - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
    - `train.py` — the file you modify. Model architecture, optimizer, training loop.
    - `commons.py` — knowledge base interface. Do not modify, but use its CLI commands.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with header row and baseline entry. The baseline results are already known from the output format section below (val_bpb: 0.997900, peak_vram_mb: 45060.2). Do NOT re-run the baseline — just record it.
-6. **Read the knowledge base**: Run `uv run commons.py read-brief` to see what prior experiments have found. If there are prior findings, use them to inform your experiment choices from the start.
-7. **Confirm and go**: Confirm setup looks good.
+3. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
+4. **Initialize results.tsv**: Create `results.tsv` with header row and baseline entry. Run the baseline first to get the actual numbers for this platform (they vary by GPU).
+5. **Read the knowledge base**: Run `uv run commons.py read-brief` to see what prior experiments have found. If there are prior findings, use them to inform your experiment choices from the start.
+6. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
 
@@ -91,7 +90,7 @@ d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 
 ## The experiment loop
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
+The experiment runs on a dedicated branch (e.g. `experiment/mar5` or `experiment/condB_seed0`).
 
 LOOP FOREVER:
 
@@ -104,7 +103,7 @@ LOOP FOREVER:
 4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:\|^num_steps:\|^training_seconds:" run.log`
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv
+7. Record the results in the tsv (NOTE: do not commit results.tsv, leave it untracked by git)
 8. **Write an experiment card**: Record your findings to the shared knowledge base:
    ```
    uv run commons.py write-card \
