@@ -1,3 +1,6 @@
+# Editor/IDE
+.obsidian/
+
 # Python-generated files
 __pycache__/
 *.py[oc]

@@ -12,28 +12,10 @@ RESUME="${3:-}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROJECTS_DIR="${EXPERIMENT_BASE_DIR:-$(dirname "$REPO_ROOT")/experiment_runs}"
 
-# Condition configs
-declare -A AGENTS=(
-    [condA]=1 [condB]=1 [condC]=2 [condD]=2 [condE]=2 [condF]=4 [condG]=4
-    [ablation_G-cov]=4 [ablation_G-lin]=4 [ablation_G-dir]=4 [ablation_G-syn]=4 [ablation_G-struct]=4
-)
-declare -A EXPERIMENTS_PER_AGENT=(
-    [condA]=100 [condB]=100 [condC]=50 [condD]=50 [condE]=50 [condF]=25 [condG]=25
-    [ablation_G-cov]=25 [ablation_G-lin]=25 [ablation_G-dir]=25 [ablation_G-syn]=25 [ablation_G-struct]=25
-)
-declare -A SHARED_KB=(
-    [condA]=false [condB]=false [condC]=false [condD]=true [condE]=true [condF]=false [condG]=true
-    [ablation_G-cov]=true [ablation_G-lin]=true [ablation_G-dir]=true [ablation_G-syn]=true [ablation_G-struct]=true
-)
-declare -A DIRECTOR=(
-    [condA]=false [condB]=false [condC]=false [condD]=false [condE]=true [condF]=false [condG]=true
-    [ablation_G-cov]=true [ablation_G-lin]=true [ablation_G-dir]=false [ablation_G-syn]=true [ablation_G-struct]=true
-)
+# Load condition config (bash 3.2 compatible)
+source "$(dirname "$0")/condition_config.sh"
+get_config "$CONDITION"
 
-NUM_AGENTS="${AGENTS[$CONDITION]}"
-NUM_EXPERIMENTS="${EXPERIMENTS_PER_AGENT[$CONDITION]}"
-IS_SHARED="${SHARED_KB[$CONDITION]}"
-HAS_DIRECTOR="${DIRECTOR[$CONDITION]}"
 RUN_DIR="$PROJECTS_DIR/${CONDITION}_seed${SEED}"
 
 echo "=== Setting up $CONDITION seed $SEED ==="
@@ -51,38 +33,38 @@ reset_kb() {
     rm -f "$dir/knowledge/synthesis/"*.md
 }
 
-if [[ "$NUM_AGENTS" -eq 1 ]]; then
+if [ "$NUM_AGENTS" -eq 1 ]; then
     # Single agent: just create a branch
     cd "$REPO_ROOT"
     BRANCH="experiment/${CONDITION}_seed${SEED}"
     git checkout master
     git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
 
-    if [[ "$RESUME" != "--resume" ]]; then
+    if [ "$RESUME" != "--resume" ]; then
         reset_kb "$REPO_ROOT"
         git add -A && git commit -m "reset knowledge base for ${CONDITION}_seed${SEED}" --allow-empty
     fi
 
     # For condition A: copy the stripped program.md
-    if [[ "$CONDITION" == "condA" ]]; then
+    if [ "$CONDITION" = "condA" ]; then
         cp "$REPO_ROOT/scripts/experiments/condA_program.md" "$REPO_ROOT/program.md"
         git add program.md && git commit -m "use stripped program.md for condA (no knowledge base)"
     fi
 
     echo "Ready. Working directory: $REPO_ROOT (branch: $BRANCH)"
 
-elif [[ "$IS_SHARED" == "false" ]]; then
+elif [ "$IS_SHARED" = "false" ]; then
     # Isolated multi-agent: create N separate repo copies
     for i in $(seq 1 "$NUM_AGENTS"); do
         AGENT_DIR="$RUN_DIR/agent${i}"
-        if [[ ! -d "$AGENT_DIR" ]]; then
+        if [ ! -d "$AGENT_DIR" ]; then
             git clone "$REPO_ROOT" "$AGENT_DIR"
             cd "$AGENT_DIR"
             git checkout -b "experiment/${CONDITION}_seed${SEED}_agent${i}"
         else
             cd "$AGENT_DIR"
         fi
-        if [[ "$RESUME" != "--resume" ]]; then
+        if [ "$RESUME" != "--resume" ]; then
             reset_kb "$AGENT_DIR"
             git add -A && git commit -m "reset KB for ${CONDITION}_seed${SEED}_agent${i}" --allow-empty
         fi
@@ -96,7 +78,7 @@ else
     git checkout master
     git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
 
-    if [[ "$RESUME" != "--resume" ]]; then
+    if [ "$RESUME" != "--resume" ]; then
         reset_kb "$REPO_ROOT"
         git add -A && git commit -m "reset KB for ${CONDITION}_seed${SEED}" --allow-empty
     fi
@@ -104,7 +86,7 @@ else
     # Create worktrees for agents 2..N
     for i in $(seq 2 "$NUM_AGENTS"); do
         WT_DIR="$RUN_DIR/agent${i}"
-        if [[ ! -d "$WT_DIR" ]]; then
+        if [ ! -d "$WT_DIR" ]; then
             git worktree add "$WT_DIR" "$BRANCH"
         fi
         echo "Agent $i worktree: $WT_DIR"
@@ -113,20 +95,22 @@ else
     echo "Agent 1: $REPO_ROOT (branch: $BRANCH)"
 
     # Apply ablation if this is an ablation condition
-    if [[ "$CONDITION" == ablation_* ]]; then
-        ABLATION_NAME="${CONDITION#ablation_}"
-        ABLATION_SCRIPT="$REPO_ROOT/scripts/experiments/ablations/apply_ablation.sh"
-        if [[ -x "$ABLATION_SCRIPT" ]]; then
-            echo "Applying ablation: $ABLATION_NAME"
-            "$ABLATION_SCRIPT" "$ABLATION_NAME" "$REPO_ROOT"
-            git add -A && git commit -m "apply $ABLATION_NAME ablation" --allow-empty
-        else
-            echo "WARNING: Ablation script not found: $ABLATION_SCRIPT"
-        fi
-    fi
+    case "$CONDITION" in
+        ablation_*)
+            ABLATION_NAME="${CONDITION#ablation_}"
+            ABLATION_SCRIPT="$REPO_ROOT/scripts/experiments/ablations/apply_ablation.sh"
+            if [ -x "$ABLATION_SCRIPT" ]; then
+                echo "Applying ablation: $ABLATION_NAME"
+                "$ABLATION_SCRIPT" "$ABLATION_NAME" "$REPO_ROOT"
+                git add -A && git commit -m "apply $ABLATION_NAME ablation" --allow-empty
+            else
+                echo "WARNING: Ablation script not found: $ABLATION_SCRIPT"
+            fi
+            ;;
+    esac
 
     # Populate director queue if enabled
-    if [[ "$HAS_DIRECTOR" == "true" ]]; then
+    if [ "$HAS_DIRECTOR" = "true" ]; then
         echo "Populating director queue..."
         uv run director.py run --max-experiments 10
         git add -A && git commit -m "populate initial queue for ${CONDITION}_seed${SEED}" --allow-empty

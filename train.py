@@ -455,7 +455,7 @@ WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 validate_window_pattern(WINDOW_PATTERN)
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
+TOTAL_BATCH_SIZE = 2**16 if detect_platform() == "mps" else 2**19  # MPS: 64K, CUDA: 524K tokens per step
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -467,8 +467,8 @@ WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
-DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 32 if detect_platform() == "mps" else 128  # per-device batch size (reduce if OOM)
+DEPTH = 4 if detect_platform() == "mps" else 8  # MPS: 4 layers (~25M params), CUDA: 8 layers (~50M params)
+DEVICE_BATCH_SIZE = 16 if detect_platform() == "mps" else 128  # per-device batch size (reduce if OOM)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -528,7 +528,7 @@ optimizer = model.setup_optimizer(
 compile_fn = get_compile_fn()
 model = compile_fn(model)
 
-train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
+train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train", device=device)
 x, y, epoch = next(train_loader)  # prefetch first batch
 
 print(f"Time budget: {TIME_BUDGET}s")
@@ -560,6 +560,7 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+warmup_steps = 2 if detect_platform() == "mps" else 10  # MPS has no torch.compile overhead
 
 while True:
     sync_device()
@@ -596,7 +597,7 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    if step > warmup_steps:
         total_training_time += dt
 
     # Logging
@@ -621,7 +622,7 @@ while True:
     step += 1
 
     # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > 10 and total_training_time >= TIME_BUDGET:
+    if step > warmup_steps and total_training_time >= TIME_BUDGET:
         break
 
 print()  # newline after \r training log
@@ -631,12 +632,12 @@ total_tokens = step * TOTAL_BATCH_SIZE
 # Final eval
 model.eval()
 with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE, device=device)
 
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * max(0, step - warmup_steps) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = get_peak_memory_mb()
 
 print("---")
