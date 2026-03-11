@@ -299,11 +299,11 @@ def compute_all(results_dir: Path, seeds: list[int] = [1, 2, 3]) -> dict:
     # Ablation metrics (single seed typically, but support multiple)
     g_best = results["conditions"]["condG"]["best_bpb"]["mean"]
     for abl in ABLATIONS:
-        abl_dir = results_dir / f"{abl}_seed1"
-        if not abl_dir.exists():
-            # Try without seed suffix
-            abl_dir = results_dir / abl
-        if not abl_dir.exists():
+        # Check if any seed directory exists for this ablation
+        abl_exists = any(
+            (results_dir / f"{abl}_seed{s}").exists() for s in seeds
+        ) or (results_dir / abl).exists()
+        if not abl_exists:
             continue
 
         best_mean, best_std = aggregate_over_seeds(compute_best_bpb, results_dir, abl, seeds)

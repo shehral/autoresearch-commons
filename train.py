@@ -467,7 +467,7 @@ WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
-DEPTH = 4 if detect_platform() == "mps" else 8  # MPS: 4 layers (~25M params), CUDA: 8 layers (~50M params)
+DEPTH = 4 if detect_platform() == "mps" else 8  # MPS: 4 layers (~11.5M params), CUDA: 8 layers (~50M params)
 DEVICE_BATCH_SIZE = 16 if detect_platform() == "mps" else 128  # per-device batch size (reduce if OOM)
 
 # ---------------------------------------------------------------------------
