@@ -252,8 +252,11 @@ def get_token_bytes(device="cpu"):
         return torch.load(f, map_location=device)
 
 
-def _document_batches(split, tokenizer_batch_size=128):
-    """Infinite iterator over document batches from parquet files."""
+def _document_batches(split, tokenizer_batch_size=128, rank=0, world_size=1):
+    """Infinite iterator over document batches from parquet files.
+
+    With world_size > 1 each rank reads a disjoint stride of row groups, so data-parallel
+    ranks never see the same document (used by the multi-GPU paths in train.py)."""
     parquet_paths = list_parquet_files()
     assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
     val_path = os.path.join(DATA_DIR, VAL_FILENAME)
@@ -265,7 +268,7 @@ def _document_batches(split, tokenizer_batch_size=128):
     while True:
         for filepath in parquet_paths:
             pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
+            for rg_idx in range(rank, pf.num_row_groups, world_size):
                 rg = pf.read_row_group(rg_idx)
                 batch = rg.column('text').to_pylist()
                 for i in range(0, len(batch), tokenizer_batch_size):
@@ -273,7 +276,7 @@ def _document_batches(split, tokenizer_batch_size=128):
         epoch += 1
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device="cuda"):
+def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device="cuda", rank=0, world_size=1):
     """
     BOS-aligned dataloader with best-fit packing.
     Every row starts with BOS. Documents packed using best-fit to minimize cropping.
@@ -282,7 +285,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device="cuda"):
     """
     assert split in ["train", "val"]
     row_capacity = T + 1
-    batches = _document_batches(split)
+    batches = _document_batches(split, rank=rank, world_size=world_size)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer = []
     epoch = 1
@@ -295,7 +298,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device="cuda"):
 
     # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    use_pin = (device == "cuda" or str(device) == "cuda")
+    use_pin = str(device).startswith("cuda")
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_pin)
     gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
     cpu_inputs = cpu_buffer[:B * T].view(B, T)

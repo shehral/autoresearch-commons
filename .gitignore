@@ -12,7 +12,8 @@ wheels/
 # Virtual environments
 .venv
 worktrees/
-results/
+results/*
+!results/multigpu/
 queue/
 
 # Agent prompt files (generated per-session by launchers)

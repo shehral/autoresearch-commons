@@ -8,7 +8,9 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
+import contextlib
 import gc
+import math
 import time
 from dataclasses import dataclass, asdict
 
@@ -23,10 +25,67 @@ from platform_utils import (
 )
 
 attn_fn = get_attention_forward()
-print(f"Platform: {detect_platform()}")
-print(f"Attention: {'Flash Attention 3' if detect_platform() == 'cuda' else 'SDPA'}")
 
-from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+# ---------------------------------------------------------------------------
+# Multi-GPU controls (all optional; with none of them set this file behaves exactly
+# as the single-process script). Launch with torchrun, e.g.
+#   AR_DIST=ddp  torchrun --standalone --nproc_per_node=4 train.py
+#   AR_DIST=fsdp AR_ACT_CKPT=1 torchrun --standalone --nproc_per_node=4 train.py
+# See docs/multigpu.md for what each knob does and for the measured results.
+# ---------------------------------------------------------------------------
+import json
+import torch.distributed as dist
+
+AR_DIST = os.environ.get("AR_DIST", "").lower()          # "" | "ddp" | "fsdp"
+AR_ACT_CKPT = os.environ.get("AR_ACT_CKPT", "0") == "1"  # activation checkpointing per Block
+AR_COMPILE = os.environ.get("AR_COMPILE")                # "1"/"0"; unset = platform default
+AR_SMOKE = os.environ.get("AR_SMOKE", "0") == "1"        # random data, no tokenizer, no download
+AR_TAG = os.environ.get("AR_TAG", "")                    # name of the results JSON
+AR_RESULTS_DIR = os.environ.get("AR_RESULTS_DIR", "results/multigpu")
+WORLD_SIZE = int(os.environ.get("WORLD_SIZE", "1"))
+RANK = int(os.environ.get("RANK", "0"))
+LOCAL_RANK = int(os.environ.get("LOCAL_RANK", "0"))
+DISTRIBUTED = WORLD_SIZE > 1 or AR_DIST in ("ddp", "fsdp")
+if DISTRIBUTED and AR_DIST not in ("ddp", "fsdp"):
+    AR_DIST = "ddp"
+IS_MAIN = RANK == 0
+
+if IS_MAIN:
+    print(f"Platform: {detect_platform()}")
+    print(f"Attention: {'Flash Attention 3' if detect_platform() == 'cuda' else 'SDPA'}")
+    print(f"Distributed: {AR_DIST or 'none'} (world_size={WORLD_SIZE}) | activation checkpointing: {AR_ACT_CKPT}")
+
+if AR_SMOKE:
+    # Hermetic smoke test: a fake tokenizer and random tokens, so the distributed code paths
+    # (process group, DDP/FSDP wrapping, no_sync, stop flags, eval, results JSON) can be run on
+    # a laptop CPU or in a 2-GPU gpu-short job without downloading data.
+    MAX_SEQ_LEN = int(os.environ.get("AR_SEQ_LEN", "256"))
+    TIME_BUDGET = float(os.environ.get("AR_TIME_BUDGET", "3"))
+
+    class Tokenizer:
+        @classmethod
+        def from_directory(cls):
+            return cls()
+        def get_vocab_size(self):
+            return 1024
+        def get_bos_token_id(self):
+            return 0
+
+    def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device="cuda", rank=0, world_size=1):
+        g = torch.Generator().manual_seed(1234 + rank)
+        while True:
+            toks = torch.randint(0, 1024, (B, T + 1), generator=g)
+            yield toks[:, :-1].contiguous().to(device), toks[:, 1:].contiguous().to(device), 1
+
+    @torch.no_grad()
+    def evaluate_bpb(model, tokenizer, batch_size, device="cuda"):
+        loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val", device=device)
+        losses = [model(*next(loader)[:2]).item() for _ in range(2)]
+        return sum(losses) / len(losses) / math.log(2)  # smoke only: nats/token -> bits/token, not bits/byte
+else:
+    from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+    if os.environ.get("AR_TIME_BUDGET"):
+        TIME_BUDGET = float(os.environ["AR_TIME_BUDGET"])
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -456,6 +515,7 @@ validate_window_pattern(WINDOW_PATTERN)
 
 # Optimization
 TOTAL_BATCH_SIZE = 2**16 if detect_platform() == "mps" else 2**19  # MPS: 64K, CUDA: 524K tokens per step
+TOTAL_BATCH_SIZE = int(os.environ.get("AR_TOTAL_BATCH", TOTAL_BATCH_SIZE))  # global tokens per optimizer step
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -469,17 +529,29 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 # Model size
 DEPTH = 4 if detect_platform() == "mps" else 8  # MPS: 4 layers (~11.5M params), CUDA: 8 layers (~50M params)
 DEVICE_BATCH_SIZE = 16 if detect_platform() == "mps" else 128  # per-device batch size (reduce if OOM)
+DEPTH = int(os.environ.get("AR_DEPTH", DEPTH))
+DEVICE_BATCH_SIZE = int(os.environ.get("AR_DEVICE_BATCH", DEVICE_BATCH_SIZE))
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
 
 t_start = time.time()
-seed_device(42)
+seed_device(42)  # same seed on every rank: identical init for DDP, and FSDP shards the identical init
 start_memory_tracking()
 torch.set_float32_matmul_precision("high")
-device = get_device()
+if DISTRIBUTED:
+    dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
+    if torch.cuda.is_available():
+        torch.cuda.set_device(LOCAL_RANK)
+        device = torch.device("cuda", LOCAL_RANK)
+    else:
+        device = torch.device("cpu")
+else:
+    device = torch.device(os.environ["AR_DEVICE"]) if os.environ.get("AR_DEVICE") else get_device()
 autocast_ctx = get_autocast_ctx()
+if device.type == "cpu":
+    autocast_ctx = torch.autocast(device_type="cpu", dtype=torch.bfloat16)  # bf16 embeddings need autocast on CPU
 H100_BF16_PEAK_FLOPS = 989.5e12
 
 tokenizer = Tokenizer.from_directory()
@@ -503,20 +575,58 @@ with torch.device("meta"):
     model = GPT(config)
 model.to_empty(device=device)
 model.init_weights()
+raw_model = model  # the plain nn.Module; `model` may become a DDP or compiled wrapper below
 
-param_counts = model.num_scaling_params()
-print("Parameter counts:")
-for key, value in param_counts.items():
-    print(f"  {key:24s}: {value:,}")
+param_counts = raw_model.num_scaling_params()
+if IS_MAIN:
+    print("Parameter counts:")
+    for key, value in param_counts.items():
+        print(f"  {key:24s}: {value:,}")
 num_params = param_counts['total']
-num_flops_per_token = model.estimate_flops()
-print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
+num_flops_per_token = raw_model.estimate_flops()
+if IS_MAIN:
+    print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
+# Strong scaling: the global batch (TOTAL_BATCH_SIZE tokens per optimizer step) is fixed, and the
+# per-rank micro-batch shrinks until world_size ranks x micro-batch divides it.
+while DISTRIBUTED and DEVICE_BATCH_SIZE * MAX_SEQ_LEN * WORLD_SIZE > TOTAL_BATCH_SIZE and DEVICE_BATCH_SIZE > 1:
+    DEVICE_BATCH_SIZE //= 2
 tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
-assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
-grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
+assert TOTAL_BATCH_SIZE % (tokens_per_fwdbwd * WORLD_SIZE) == 0
+grad_accum_steps = TOTAL_BATCH_SIZE // (tokens_per_fwdbwd * WORLD_SIZE)
 
-optimizer = model.setup_optimizer(
+# Activation checkpointing: each Block recomputes its activations in backward instead of
+# storing them (non-reentrant implementation, which composes with FSDP2 and DDP).
+if AR_ACT_CKPT:
+    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+        checkpoint_wrapper, CheckpointImpl,
+    )
+    for i, block in enumerate(raw_model.transformer.h):
+        raw_model.transformer.h[i] = checkpoint_wrapper(block, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
+
+# FSDP2: shard parameters, gradients and optimizer state across ranks, one group per Block plus
+# the root (embeddings, lm_head, scalars). Must happen BEFORE the optimizer sees the parameters.
+if AR_DIST == "fsdp":
+    from torch.distributed.device_mesh import init_device_mesh
+    from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
+    _mesh = init_device_mesh(device.type, (WORLD_SIZE,))  # explicit mesh: cuda on the cluster, cpu for the smoke
+    _mp = (MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)
+           if device.type == "cuda" else MixedPrecisionPolicy())
+    # init_weights keeps the embedding tables in bf16 while everything else is fp32, and an FSDP2
+    # group must be dtype-uniform, so every module whose own parameters are bf16 becomes its own group.
+    _own = []
+    for _name, _mod in raw_model.named_modules():
+        _direct = list(_mod.parameters(recurse=False))
+        if _direct and all(_p.dtype == torch.bfloat16 for _p in _direct):
+            fully_shard(_mod, mesh=_mesh, mp_policy=_mp)
+            _own.append(_name)
+    if IS_MAIN:
+        print(f"FSDP2: separate bf16 shard groups for {_own}")
+    for block in raw_model.transformer.h:
+        fully_shard(block, mesh=_mesh, mp_policy=_mp)
+    fully_shard(raw_model, mesh=_mesh, mp_policy=_mp)
+
+optimizer = raw_model.setup_optimizer(
     unembedding_lr=UNEMBEDDING_LR,
     embedding_lr=EMBEDDING_LR,
     scalar_lr=SCALAR_LR,
@@ -524,15 +634,42 @@ optimizer = model.setup_optimizer(
     matrix_lr=MATRIX_LR,
     weight_decay=WEIGHT_DECAY,
 )
+if AR_DIST == "fsdp":
+    # Muon's Newton-Schulz step needs whole gradient matrices, and FSDP shards them. Rather than
+    # gather every matrix each step, the FSDP arm trains every group with AdamW (fused on CUDA).
+    # So the FSDP arm's val_bpb is not comparable with the Muon arms; its tokens/s and memory are.
+    _matrix_adamw_lr = float(os.environ.get("AR_MATRIX_ADAMW_LR", "0.004")) * (config.n_embd / 768) ** -0.5
+    _groups = []
+    for g in optimizer.param_groups:
+        if g["kind"] == "muon":
+            _groups.append(dict(params=g["params"], lr=_matrix_adamw_lr, betas=ADAM_BETAS, eps=1e-10, weight_decay=g["weight_decay"]))
+        else:
+            _groups.append(dict(params=g["params"], lr=g["lr"], betas=g["betas"], eps=g["eps"], weight_decay=g["weight_decay"]))
+    optimizer = torch.optim.AdamW(_groups, fused=(device.type == "cuda"), foreach=(device.type != "cuda") or None)
+    for g in optimizer.param_groups:
+        g["kind"] = "adamw"
+        g["initial_lr"] = g["lr"]
 
-compile_fn = get_compile_fn()
-model = compile_fn(model)
+# DDP: full replica per rank, gradients all-reduced during backward (bucketed, overlapped).
+if AR_DIST == "ddp":
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    model = DDP(raw_model, device_ids=[LOCAL_RANK] if device.type == "cuda" else None)
 
-train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train", device=device)
+if AR_COMPILE is None:
+    use_compile = should_compile() and AR_DIST != "fsdp"  # FSDP2 + compile is a follow-up, not v1
+else:
+    use_compile = AR_COMPILE == "1"
+if use_compile:
+    model = torch.compile(model, dynamic=False)
+
+train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train", device=device,
+                               rank=RANK, world_size=WORLD_SIZE)
 x, y, epoch = next(train_loader)  # prefetch first batch
 
-print(f"Time budget: {TIME_BUDGET}s")
-print(f"Gradient accumulation steps: {grad_accum_steps}")
+if IS_MAIN:
+    print(f"Time budget: {TIME_BUDGET}s")
+    print(f"Per-rank micro-batch: {DEVICE_BATCH_SIZE} x {MAX_SEQ_LEN} tokens; ranks: {WORLD_SIZE}; "
+          f"gradient accumulation steps: {grad_accum_steps}; compile: {use_compile}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
@@ -561,16 +698,27 @@ smooth_train_loss = 0
 total_training_time = 0
 step = 0
 warmup_steps = 2 if detect_platform() == "mps" else 10  # MPS has no torch.compile overhead
+warmup_steps = int(os.environ.get("AR_WARMUP_STEPS", warmup_steps))
+fail_flag = False
 
 while True:
     sync_device()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            loss = model(x, y)
-        train_loss = loss.detach()
-        loss = loss / grad_accum_steps
-        loss.backward()
+        is_last_micro = micro_step == grad_accum_steps - 1
+        # Skip the gradient all-reduce / reduce-scatter on every micro-step but the last one.
+        if AR_DIST == "ddp":
+            sync_ctx = model.no_sync() if not is_last_micro else contextlib.nullcontext()
+        else:
+            if AR_DIST == "fsdp":
+                raw_model.set_requires_gradient_sync(is_last_micro)
+            sync_ctx = contextlib.nullcontext()
+        with sync_ctx:  # DDP's no_sync() must wrap forward AND backward in one entry
+            with autocast_ctx:
+                loss = model(x, y)
+            train_loss = loss.detach()
+            loss = loss / grad_accum_steps
+            loss.backward()
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
@@ -584,14 +732,12 @@ while True:
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
     optimizer.step()
-    model.zero_grad(set_to_none=True)
+    raw_model.zero_grad(set_to_none=True)
 
     train_loss_f = train_loss.item()
 
-    # Fast fail: abort if loss is exploding
-    if train_loss_f > 100:
-        print("FAIL")
-        exit(1)
+    # Fast fail: abort if loss is exploding (decided jointly across ranks below)
+    fail_flag = train_loss_f > 100
 
     sync_device()
     t1 = time.time()
@@ -606,10 +752,11 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / (H100_BF16_PEAK_FLOPS * WORLD_SIZE)
     remaining = max(0, TIME_BUDGET - total_training_time)
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    if IS_MAIN:
+        print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -621,38 +768,83 @@ while True:
 
     step += 1
 
-    # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > warmup_steps and total_training_time >= TIME_BUDGET:
+    # Time's up — but only stop after warmup steps so we don't count compilation.
+    # Every rank must take the same decision, or the next collective hangs: agree via all_reduce.
+    done_flag = step > warmup_steps and total_training_time >= TIME_BUDGET
+    if DISTRIBUTED:
+        flags = torch.tensor([int(done_flag), int(fail_flag)], device=device if device.type == "cuda" else "cpu")
+        dist.all_reduce(flags, op=dist.ReduceOp.MAX)
+        done_flag, fail_flag = bool(flags[0].item()), bool(flags[1].item())
+    if fail_flag:
+        if IS_MAIN:
+            print("FAIL")
+        if DISTRIBUTED:
+            dist.destroy_process_group()
+        exit(1)
+    if done_flag:
         break
 
 print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval
-model.eval()
+# Final eval. Every rank evaluates the same val stream (FSDP forward is collective, so all
+# ranks must participate); the plain module is used so DDP hooks and compile are out of the way.
+raw_model.eval()
+eval_model = model if not DISTRIBUTED else raw_model
 with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE, device=device)
+    val_bpb = evaluate_bpb(eval_model, tokenizer, DEVICE_BATCH_SIZE, device=device)
 
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * max(0, step - warmup_steps) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * max(0, step - warmup_steps) / total_training_time / (H100_BF16_PEAK_FLOPS * WORLD_SIZE) if total_training_time > 0 else 0
 peak_vram_mb = get_peak_memory_mb()
+peak_vram_mb_max = peak_vram_mb
+if DISTRIBUTED:
+    _pk = torch.tensor([peak_vram_mb], device=device if device.type == "cuda" else "cpu")
+    dist.all_reduce(_pk, op=dist.ReduceOp.MAX)
+    peak_vram_mb_max = _pk.item()
+steady_tok_per_sec = TOTAL_BATCH_SIZE * max(0, step - warmup_steps) / total_training_time if total_training_time > 0 else 0
+
+if IS_MAIN and (DISTRIBUTED or AR_TAG):
+    os.makedirs(AR_RESULTS_DIR, exist_ok=True)
+    _tag = AR_TAG or f"{AR_DIST or 'single'}_ws{WORLD_SIZE}_ckpt{int(AR_ACT_CKPT)}_compile{int(use_compile)}"
+    _out = dict(tag=_tag, dist=AR_DIST or "none", world_size=WORLD_SIZE, act_ckpt=AR_ACT_CKPT, compile=use_compile,
+                smoke=AR_SMOKE, depth=DEPTH, num_params=int(num_params), total_batch_tokens=TOTAL_BATCH_SIZE,
+                device_batch=DEVICE_BATCH_SIZE, seq_len=MAX_SEQ_LEN, grad_accum_steps=grad_accum_steps,
+                time_budget_s=TIME_BUDGET, training_seconds=total_training_time, num_steps=step,
+                steady_tok_per_sec=steady_tok_per_sec, mfu_percent_per_gpu=steady_state_mfu,
+                peak_vram_mb_rank0=peak_vram_mb, peak_vram_mb_max=peak_vram_mb_max, val_bpb=val_bpb,
+                torch=torch.__version__, device=str(device),
+                gpu=(torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"),
+                attention=("flash-attn-3-or-sdpa" if detect_platform() == "cuda" else "sdpa"))
+    with open(os.path.join(AR_RESULTS_DIR, _tag + ".json"), "w") as _f:
+        json.dump(_out, _f, indent=2)
+    print(f"results_json:     {os.path.join(AR_RESULTS_DIR, _tag + '.json')}")
+
+if not IS_MAIN:
+    dist.barrier()
+    dist.destroy_process_group()
+    raise SystemExit(0)
 
 print("---")
 print(f"val_bpb:          {val_bpb:.6f}")
 print(f"training_seconds: {total_training_time:.1f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
-print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
+print(f"peak_vram_mb:     {peak_vram_mb:.1f}" + (f" (max over ranks: {peak_vram_mb_max:.1f})" if DISTRIBUTED else ""))
+print(f"steady_tok_per_s: {steady_tok_per_sec:,.0f}")
+print(f"world_size:       {WORLD_SIZE} | dist: {AR_DIST or 'none'} | act_ckpt: {AR_ACT_CKPT} | compile: {use_compile}")
 print(f"mfu_percent:      {steady_state_mfu:.2f}")
 print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
 
-# Auto-record experiment card to knowledge base
+# Auto-record experiment card to knowledge base (single-process real runs only)
 try:
+    if DISTRIBUTED or AR_SMOKE:
+        raise RuntimeError("skipped for distributed or smoke runs")
     import subprocess as _sp
     _commit_hash = _sp.run(
         ["git", "rev-parse", "--short=7", "HEAD"],
@@ -692,3 +884,7 @@ try:
         print(f"auto_card:        {_commit_hash}")
 except Exception as _e:
     print(f"auto_card_error:  {_e}")
+
+if DISTRIBUTED:
+    dist.barrier()
+    dist.destroy_process_group()
