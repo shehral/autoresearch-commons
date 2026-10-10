@@ -16,6 +16,6 @@ rc=0
 for cfg in "ddp 0" "ddp 1" "fsdp 0" "fsdp 1"; do
   read -r d c <<< "$cfg"; set -- "$d" "$c"
   ar_log "=== smoke $1 act_ckpt=$2 ==="
-  AR_DIST=$1 AR_ACT_CKPT=$2 AR_TAG="smoke_$1_ckpt$2" "$AR_VENV/bin/torchrun" --standalone --nproc_per_node=2 train.py 2>&1 | tail -40 || { rc=1; ar_log "FAILED $cfg"; }
+  AR_DIST=$1 AR_ACT_CKPT=$2 AR_TAG="smoke_$1_ckpt$2" "$AR_VENV/bin/python" -m torch.distributed.run --standalone --nproc_per_node=2 train.py 2>&1 | tail -40 || { rc=1; ar_log "FAILED $cfg"; }
 done
 ar_log "smoke rc=$rc"; exit $rc

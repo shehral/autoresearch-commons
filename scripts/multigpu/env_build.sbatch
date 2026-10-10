@@ -17,7 +17,7 @@ import torch, pyarrow, tiktoken, rustbpe
 print("torch", torch.__version__, "cuda", torch.version.cuda, "| pyarrow", pyarrow.__version__)
 from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
-print("fsdp2 + checkpoint_wrapper import ok; torchrun:", __import__("shutil").which("torchrun"))
+print("fsdp2 + checkpoint_wrapper import ok")
 PY
-ls "$AR_VENV/bin/torchrun"
+"$AR_VENV/bin/python" -c "import torch.distributed.run; print(\"torch.distributed.run ok\")"
 ar_log "env ready: $AR_VENV"

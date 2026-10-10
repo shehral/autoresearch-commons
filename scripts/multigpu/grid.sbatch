@@ -12,7 +12,7 @@ source "${AR_REPO:-/projects/interpretability/shehral.m/autoresearch/repo}/scrip
 cd "$AR_REPO"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader | head -4
 export AR_TIME_BUDGET="${AR_TIME_BUDGET:-120}" AR_RESULTS_DIR=results/multigpu
-PY="$AR_VENV/bin/python"; TR="$AR_VENV/bin/torchrun --standalone"
+PY="$AR_VENV/bin/python"; TR="$AR_VENV/bin/python -m torch.distributed.run --standalone"
 run() { tag=$1; shift; ar_log "=== $tag ==="; AR_TAG=$tag "$@" 2>&1 | tail -40 || ar_log "FAILED $tag"; }
 run single_compile1 env AR_COMPILE=1 $PY train.py
 run single_compile0 env AR_COMPILE=0 $PY train.py
