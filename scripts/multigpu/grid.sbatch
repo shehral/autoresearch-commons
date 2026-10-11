@@ -10,6 +10,14 @@
 set -o pipefail
 source "${AR_REPO:-/projects/interpretability/shehral.m/autoresearch/repo}/scripts/multigpu/common.sh"
 cd "$AR_REPO"
+# Race guard: when two copies of this job are queued on different GPU types, the first to start
+# claims the lock, cancels its pending siblings (same job name, same user) and the rest exit at once.
+if [ -n "${AR_LOCK:-}" ]; then
+  mkdir -p "$AR_ROOT/locks"
+  if ! mkdir "$AR_ROOT/locks/$AR_LOCK" 2>/dev/null; then ar_log "lock $AR_LOCK already claimed; exiting"; exit 0; fi
+  squeue -h -u "$USER" -n "$SLURM_JOB_NAME" -o %i | grep -vx "$SLURM_JOB_ID" | xargs -r scancel 2>/dev/null || true
+  ar_log "claimed lock $AR_LOCK on $(hostname) ($(nvidia-smi --query-gpu=name --format=csv,noheader | head -1))"
+fi
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader | head -4
 export AR_TIME_BUDGET="${AR_TIME_BUDGET:-120}" AR_RESULTS_DIR=results/multigpu AR_ATTN="${AR_ATTN:-sdpa}"
 ar_log "grid with AR_ATTN=$AR_ATTN, budget ${AR_TIME_BUDGET}s per run"
