@@ -123,13 +123,26 @@ def get_attention_forward():
     Input shapes: q is (B, T, H_q, D), k/v are (B, T, H_kv, D).
     Output shape: (B, T, H_q, D).
     """
+    global _ATTN_BACKEND
     plat = detect_platform()
 
-    if plat == "cuda":
-        return _get_cuda_attention()
+    # AR_ATTN=sdpa skips the FlashAttention-3 kernel load entirely (no download, no foreign .so).
+    if plat == "cuda" and os.environ.get("AR_ATTN", "").lower() != "sdpa":
+        fn = _get_cuda_attention()
+        _ATTN_BACKEND = "flash-attn-3" if fn is not _sdpa_attention else "sdpa"
+        return fn
 
     # MPS and CPU both use the SDPA path
+    _ATTN_BACKEND = "sdpa"
     return _sdpa_attention
+
+
+_ATTN_BACKEND = "sdpa"
+
+
+def get_attention_backend_name() -> str:
+    """Name of the attention backend chosen by the last get_attention_forward() call."""
+    return _ATTN_BACKEND
 
 
 def _get_cuda_attention():

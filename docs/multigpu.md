@@ -12,6 +12,7 @@
 | `AR_TIME_BUDGET`, `AR_DEPTH`, `AR_DEVICE_BATCH`, `AR_TOTAL_BATCH`, `AR_WARMUP_STEPS` | Overrides for the benchmark grid and smoke runs. |
 | `AR_SMOKE=1` | Hermetic run on random tokens with a fake tokenizer (no download), to exercise every distributed path on a laptop CPU (gloo) or a short GPU job (NCCL). |
 | `AR_TAG`, `AR_RESULTS_DIR` | Name and folder of the results JSON written by rank 0. |
+| `AR_ATTN=sdpa` | Skip the FlashAttention-3 kernel load and use PyTorch SDPA (the Explorer grid runs this way; the JSON records the backend actually used). |
 
 Design points worth being able to explain:
 

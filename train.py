@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from platform_utils import (
     detect_platform, get_device, get_attention_forward, get_compile_fn,
     get_autocast_ctx, sync_device, get_peak_memory_mb, seed_device, should_compile,
-    validate_window_pattern, start_memory_tracking,
+    validate_window_pattern, start_memory_tracking, get_attention_backend_name,
 )
 
 attn_fn = get_attention_forward()
@@ -52,7 +52,7 @@ IS_MAIN = RANK == 0
 
 if IS_MAIN:
     print(f"Platform: {detect_platform()}")
-    print(f"Attention: {'Flash Attention 3' if detect_platform() == 'cuda' else 'SDPA'}")
+    print(f"Attention: {get_attention_backend_name()}")
     print(f"Distributed: {AR_DIST or 'none'} (world_size={WORLD_SIZE}) | activation checkpointing: {AR_ACT_CKPT}")
 
 if AR_SMOKE:
@@ -818,7 +818,7 @@ if IS_MAIN and (DISTRIBUTED or AR_TAG):
                 peak_vram_mb_rank0=peak_vram_mb, peak_vram_mb_max=peak_vram_mb_max, val_bpb=val_bpb,
                 torch=torch.__version__, device=str(device),
                 gpu=(torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"),
-                attention=("flash-attn-3-or-sdpa" if detect_platform() == "cuda" else "sdpa"))
+                attention=get_attention_backend_name())
     with open(os.path.join(AR_RESULTS_DIR, _tag + ".json"), "w") as _f:
         json.dump(_out, _f, indent=2)
     print(f"results_json:     {os.path.join(AR_RESULTS_DIR, _tag + '.json')}")
