@@ -24,8 +24,8 @@ case "${1:-all}" in
     S1=$(sbatch --parsable --gres=gpu:a100:2 --export=ALL,AR_LOCK=smoke-$LK "$S/smoke.sbatch"); echo "smoke a100 $S1"
     S2=$(sbatch --parsable --gres=gpu:h200:2 $EXC --export=ALL,AR_LOCK=smoke-$LK "$S/smoke.sbatch"); echo "smoke h200 $S2"
     DEP="--dependency=afterok:$S1?afterok:$S2"
-    G1=$(sbatch --parsable --gres=gpu:a100:4 --cpus-per-task=16 --mem=120G $DEP --export=ALL,AR_LOCK=grid-$LK "$S/grid.sbatch"); echo "grid  a100 $G1"
-    G2=$(sbatch --parsable --gres=gpu:h200:4 $EXC $DEP --export=ALL,AR_LOCK=grid-$LK "$S/grid.sbatch"); echo "grid  h200 $G2" ;;
+    G1=$(sbatch --parsable --gres=gpu:a100:2 $DEP --export=ALL,AR_LOCK=grid-$LK "$S/grid.sbatch"); echo "grid  a100 $G1"
+    G2=$(sbatch --parsable --gres=gpu:h200:2 $EXC $DEP --export=ALL,AR_LOCK=grid-$LK "$S/grid.sbatch"); echo "grid  h200 $G2" ;;
   smoke) sbatch $EXC "$S/smoke.sbatch" ;;
   grid)  sbatch $EXC "$S/grid.sbatch" ;;
 esac

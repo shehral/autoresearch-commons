@@ -1,10 +1,14 @@
 #!/bin/bash
 # The measured grid: strong scaling at a fixed 524K-token global batch, 2-minute budget per run.
+# Explorer note (2026-10-10): the gpu partition's QOS caps every job at ONE GPU (per-user total 4) and
+# the multigpu partition is closed to this account, so the default is two A100s on gpu-short
+# (2 GPUs per job and per user, 2 h wall). Override at submit time (e.g. --gres=gpu:h200:2) and set
+# AR_MAX_WS=4 on a cluster that grants four GPUs to one job; the ws4 rows then run instead of ws2_ckpt.
 #SBATCH --job-name=ar-grid
-#SBATCH --partition=gpu
+#SBATCH --partition=gpu-short
 #SBATCH --account=i.yoon
-#SBATCH --gres=gpu:h200:4
-#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=32 --mem=200G
+#SBATCH --gres=gpu:a100:2
+#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=120G
 #SBATCH --time=02:00:00
 #SBATCH --output=/projects/interpretability/shehral.m/autoresearch/logs/%x-%j.out
 set -o pipefail
@@ -19,16 +23,24 @@ if [ -n "${AR_LOCK:-}" ]; then
   ar_log "claimed lock $AR_LOCK on $(hostname) ($(nvidia-smi --query-gpu=name --format=csv,noheader | head -1))"
 fi
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader | head -4
+NGPU=$(nvidia-smi -L | wc -l | tr -d ' ')
 export AR_TIME_BUDGET="${AR_TIME_BUDGET:-120}" AR_RESULTS_DIR=results/multigpu AR_ATTN="${AR_ATTN:-sdpa}"
-ar_log "grid with AR_ATTN=$AR_ATTN, budget ${AR_TIME_BUDGET}s per run"
+AR_MAX_WS="${AR_MAX_WS:-$NGPU}"
+ar_log "grid with AR_ATTN=$AR_ATTN, budget ${AR_TIME_BUDGET}s per run, $NGPU GPUs visible, max world size $AR_MAX_WS"
 PY="$AR_VENV/bin/python"; TR="$AR_VENV/bin/python -m torch.distributed.run --standalone"
-run() { tag=$1; shift; ar_log "=== $tag ==="; AR_TAG=$tag "$@" 2>&1 | tail -40 || ar_log "FAILED $tag"; }
+run() { tag=$1; shift; ar_log "=== $tag ==="; AR_TAG=$tag "$@" 2>&1 | grep -v "^\[rank" | tail -40 || ar_log "FAILED $tag"; }
 run single_compile1 env AR_COMPILE=1 $PY train.py
 run single_compile0 env AR_COMPILE=0 $PY train.py
 run ddp_ws2         env AR_DIST=ddp  AR_COMPILE=0 $TR --nproc_per_node=2 train.py
-run ddp_ws4         env AR_DIST=ddp  AR_COMPILE=0 $TR --nproc_per_node=4 train.py
-run ddp_ws4_ckpt    env AR_DIST=ddp  AR_COMPILE=0 AR_ACT_CKPT=1 $TR --nproc_per_node=4 train.py
-run fsdp_ws4        env AR_DIST=fsdp AR_COMPILE=0 $TR --nproc_per_node=4 train.py
-run fsdp_ws4_ckpt   env AR_DIST=fsdp AR_COMPILE=0 AR_ACT_CKPT=1 $TR --nproc_per_node=4 train.py
+if [ "$AR_MAX_WS" -ge 4 ]; then
+  run ddp_ws4       env AR_DIST=ddp  AR_COMPILE=0 $TR --nproc_per_node=4 train.py
+  run ddp_ws4_ckpt  env AR_DIST=ddp  AR_COMPILE=0 AR_ACT_CKPT=1 $TR --nproc_per_node=4 train.py
+  run fsdp_ws4      env AR_DIST=fsdp AR_COMPILE=0 $TR --nproc_per_node=4 train.py
+  run fsdp_ws4_ckpt env AR_DIST=fsdp AR_COMPILE=0 AR_ACT_CKPT=1 $TR --nproc_per_node=4 train.py
+else
+  run ddp_ws2_ckpt  env AR_DIST=ddp  AR_COMPILE=0 AR_ACT_CKPT=1 $TR --nproc_per_node=2 train.py
+  run fsdp_ws2      env AR_DIST=fsdp AR_COMPILE=0 $TR --nproc_per_node=2 train.py
+  run fsdp_ws2_ckpt env AR_DIST=fsdp AR_COMPILE=0 AR_ACT_CKPT=1 $TR --nproc_per_node=2 train.py
+fi
 $PY scripts/multigpu/summarize.py results/multigpu docs/multigpu_results.md && cat docs/multigpu_results.md
 ar_log "grid done"

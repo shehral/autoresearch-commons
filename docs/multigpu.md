@@ -39,13 +39,16 @@ Design points worth being able to explain:
 AR_SMOKE=1 AR_DIST=fsdp AR_ACT_CKPT=1 AR_TIME_BUDGET=2 AR_WARMUP_STEPS=1 AR_DEPTH=2 AR_SEQ_LEN=128 \
   AR_DEVICE_BATCH=2 AR_TOTAL_BATCH=1024 AR_COMPILE=0 torchrun --standalone --nproc_per_node=2 train.py
 
-# cluster: env -> data -> 2-GPU NCCL smoke -> 4-GPU grid (dependencies handled)
+# cluster: env -> data -> 2-GPU NCCL smoke -> 2-GPU grid on gpu-short (dependencies handled)
 bash scripts/multigpu/submit_chain.sh
 ```
 
-The grid (`scripts/multigpu/grid.sbatch`) runs seven 2-minute configurations on one node with four H200s:
-single GPU with and without compile, DDP on 2 and 4 GPUs, DDP + checkpointing, FSDP2, FSDP2 + checkpointing,
-then writes `docs/multigpu_results.md`. Expect about 1.5 H200-hours in total.
+The grid (`scripts/multigpu/grid.sbatch`) runs six 2-minute configurations on one node: single GPU with and
+without compile, then DDP, DDP + checkpointing, FSDP2 and FSDP2 + checkpointing on 2 GPUs, and writes
+`docs/multigpu_results.md`. On Explorer the `gpu` partition's QOS caps every job at one GPU and the `multigpu`
+partition is closed to this account, so the grid runs on `gpu-short` with two A100s (about 25 GPU-minutes).
+Set `AR_MAX_WS=4` on a cluster that gives one job four GPUs: the ws4 rows (DDP 4, DDP 4 + checkpointing,
+FSDP2 4, FSDP2 4 + checkpointing) then replace the 2-GPU checkpointing rows, seven runs in all.
 
 ## Results
 
