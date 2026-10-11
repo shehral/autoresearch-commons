@@ -57,4 +57,9 @@ FSDP2 4, FSDP2 4 + checkpointing) then replace the 2-GPU checkpointing rows, sev
 
 ## Results
 
-See `docs/multigpu_results.md` once the grid has run. Raw JSON per run lives in `results/multigpu/`.
+Measured 2026-10-11 on 2x A100-SXM4-80GB (torch 2.11.0+cu128, SDPA, depth 8 / 50.3M params, 524K-token global
+batch, 120 s per run): DDP 1.97x and FSDP2 2.00x tokens/s over one eager GPU (482K and 488K vs 244K tok/s);
+activation checkpointing cuts peak memory from 44.7 to 19.6 GB (-56%) for -19% tokens/s; torch.compile alone
+gives 1.59x and halves peak memory (44.6 to 22.3 GB). At 50M parameters FSDP2 matches DDP because the sharded
+parameters and optimizer state are tiny next to the activations, so the memory it saves is invisible here.
+Full table: `docs/multigpu_results.md`; raw JSON per run in `results/multigpu/`.
