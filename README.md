@@ -17,7 +17,7 @@ This fork adds a **knowledge protocol**, **multi-platform support**, and an **or
 | **Orchestration** | `director.py`, `director.md` | Experiment queue, strategy planning, multi-agent coordination |
 | **Agent** | `program.md` | Worker agent instructions with knowledge integration |
 
-Everything from the original is preserved: `prepare.py` (one addition: rank-aware sharding for multi-GPU runs), `train.py` (same structure, now platform-portable and `torchrun`-ready with DDP, FSDP2 and activation checkpointing, see [docs/multigpu.md](docs/multigpu.md)), the 5-minute time budget, and val_bpb as the sole metric.
+Everything from the original is preserved: `prepare.py` (one addition: rank-aware sharding for multi-GPU runs), `train.py` (same structure, now platform-portable and `torchrun`-ready with DDP, FSDP2 and activation checkpointing, see [docs/multigpu.md](docs/multigpu.md)), the 5-minute time budget, and val_bpb as the sole metric. Measured on two A100s ([docs/multigpu_results.md](docs/multigpu_results.md)): DDP 1.97x and FSDP2 2.00x tokens/s over one GPU at a fixed 524K-token global batch; activation checkpointing cuts peak memory from 44.7 to 19.6 GB for 19% fewer tokens/s.
 
 ### Key features beyond the original
 
