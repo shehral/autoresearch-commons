@@ -37,3 +37,4 @@ analysis.ipynb
 # Track knowledge base (override any broader ignores)
 !knowledge/
 !knowledge/**
+!results/multigpu_b128_partial/

@@ -19,6 +19,11 @@ Design points worth being able to explain:
 - **Strong scaling.** The global batch stays at `TOTAL_BATCH_SIZE` tokens per optimizer step; the
   per-rank micro-batch halves until `ranks x micro-batch` divides it, so 1 GPU runs 128 x 2 (accumulation),
   2 GPUs 128 x 1, 4 GPUs 64 x 1. Tokens/s is therefore directly comparable across rows.
+
+On 80 GB A100s the eager, non-checkpointed rows OOM at the default 128 x 2048 micro-batch (first grid,
+2026-10-11: 72.7 GB in use when an 8 GiB allocation failed; the compiled single-GPU run peaked at 44 GB and
+the checkpointed 2-GPU rows at 38 GB), so `grid.sbatch` sets `AR_DEVICE_BATCH=64`: 1 GPU 64 x 4, 2 GPUs 64 x 2,
+same 524K global batch. The three 128-batch rows that did run are kept in `results/multigpu_b128_partial/`.
 - **Data sharding.** `prepare.make_dataloader(..., rank, world_size)` strides parquet row groups by rank,
   so data-parallel ranks read disjoint documents. Validation is not sharded: every rank evaluates the same
   stream, which the FSDP forward needs anyway (it is a collective).
