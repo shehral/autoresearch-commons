@@ -3,7 +3,6 @@
 # 4-GPU run at a 2-minute budget without cycling the data more than once.
 #SBATCH --job-name=ar-prepare
 #SBATCH --partition=short
-#SBATCH --account=i.yoon
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=64G
 #SBATCH --time=03:00:00
 #SBATCH --output=/projects/interpretability/shehral.m/autoresearch/logs/%x-%j.out

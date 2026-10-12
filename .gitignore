@@ -38,3 +38,6 @@ analysis.ipynb
 !knowledge/
 !knowledge/**
 !results/multigpu_b128_partial/
+
+# cluster-specific values (see scripts/multigpu/local.env.example)
+scripts/multigpu/local.env

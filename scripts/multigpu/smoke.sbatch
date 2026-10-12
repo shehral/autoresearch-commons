@@ -3,7 +3,6 @@
 # then the four distributed configs on random data (AR_SMOKE=1). ~5 minutes.
 #SBATCH --job-name=ar-smoke
 #SBATCH --partition=gpu-short
-#SBATCH --account=i.yoon
 #SBATCH --gres=gpu:h200:2
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=64G
 #SBATCH --time=00:30:00

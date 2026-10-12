@@ -63,3 +63,9 @@ activation checkpointing cuts peak memory from 44.7 to 19.6 GB (-56%) for -19% t
 gives 1.59x and halves peak memory (44.6 to 22.3 GB). At 50M parameters FSDP2 matches DDP because the sharded
 parameters and optimizer state are tiny next to the activations, so the memory it saves is invisible here.
 Full table: `docs/multigpu_results.md`; raw JSON per run in `results/multigpu/`.
+
+## Cluster-specific values
+
+The SLURM account and the compute-node proxy are not in the repo. Copy `scripts/multigpu/local.env.example` to
+`scripts/multigpu/local.env` (gitignored) and set `AR_ACCOUNT` and, if your compute nodes need one, `AR_PROXY`.
+`common.sh` and `submit_chain.sh` source that file; the chain passes `--account` only when `AR_ACCOUNT` is set.

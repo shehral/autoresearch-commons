@@ -9,7 +9,6 @@
 # grid runs AR_DEVICE_BATCH=64 (1 GPU: 64 x 4 accumulation, 2 GPUs: 64 x 2; same 524K global batch).
 #SBATCH --job-name=ar-grid
 #SBATCH --partition=gpu-short
-#SBATCH --account=i.yoon
 #SBATCH --gres=gpu:a100:2
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=120G
 #SBATCH --time=02:00:00

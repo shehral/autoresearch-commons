@@ -2,7 +2,6 @@
 # Build the benchmark venv on top of the cu128 torch env (no torch download).
 #SBATCH --job-name=ar-env
 #SBATCH --partition=short
-#SBATCH --account=i.yoon
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=32G
 #SBATCH --time=01:00:00
 #SBATCH --output=/projects/interpretability/shehral.m/autoresearch/logs/%x-%j.out
